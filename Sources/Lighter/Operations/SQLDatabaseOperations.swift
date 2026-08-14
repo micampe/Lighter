@@ -108,7 +108,13 @@ public extension SQLDatabaseOperations {
   }
 }
 
-// This is special because we need to nest for pointer validity
+/// Binds all `values`, then runs `content` once with the statement fully bound.
+///
+/// Every `SQLiteValueType.bind` must let SQLite copy the value (`SQLITE_TRANSIENT`
+/// for text and blobs) rather than lend it a buffer that only lives for the
+/// duration of the `then:` closure. Lending would require nesting a scope per
+/// value, which recurses once per bind parameter and overflows the stack on
+/// large `IN (…)` lists — cooperative threads have a 512K stack and died at ~276.
 fileprivate func bind_values<C>(_              stmt : OpaquePointer?,
                                 _            values : C?,
                                 startingAtIndex idx : Int32 = 1,
@@ -119,13 +125,10 @@ fileprivate func bind_values<C>(_              stmt : OpaquePointer?,
     assertionFailure("Missing statement for bind.")
     return content()
   }
-  guard let values = values, let value = values.first else { return content() }
-  
-  value.bind(unsafeSQLite3StatementHandle: stmt, index: idx) {
-    // We could avoid recursion here for base values, but that won't be very
-    // common for the bind situation (we usually bind things that _do_ require
-    // recursion).
-    bind_values(stmt, values.dropFirst(), startingAtIndex: idx + 1,
-                content: content)
+  guard let values = values else { return content() }
+
+  for ( offset, value ) in values.enumerated() {
+    value.bind(unsafeSQLite3StatementHandle: stmt, index: idx + Int32(offset)) {}
   }
+  content()
 }

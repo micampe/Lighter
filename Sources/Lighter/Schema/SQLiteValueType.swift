@@ -84,15 +84,17 @@ public protocol SQLiteValueType: Sendable {
    * Bind the value to the passed in SQLite3 prepared statement to the given
    * index and call a closure.
    *
-   * This is used to bind values w/o copying them, i.e. for maximum performance.
-   * The binding is only valid within the `execute` closure (i.e. to bind
-   * multiple values, they need to nest/recurse).
-   * 
+   * Implementations must hand SQLite a value it owns — texts and blobs bind
+   * with `SQLITE_TRANSIENT` so SQLite copies them. Lending a buffer that only
+   * lives for the duration of this call (`SQLITE_STATIC` over a `withCString`
+   * or `withUnsafeBytes` scope) is *not* valid: callers bind every parameter
+   * before stepping the statement, so such a pointer would dangle by the time
+   * SQLite reads it.
+   *
    * - Parameters:
    *   - statement: A SQLite3 statement handle.
    *   - index:     The parameter index in the statement, starts at 1.
-   *   - execute:   A closure that is executed while the value is bound.
-   *                Note: The binding is only valid for this closure!
+   *   - execute:   A closure that is executed once the value is bound.
    */
   func bind(unsafeSQLite3StatementHandle statement: OpaquePointer!,
             index: Int32, then execute: () -> Void)
@@ -363,6 +365,13 @@ extension Double : SQLiteValueType {
 // This isn't exported towards Swift by the SQLite3 module.
 @usableFromInline let SQLITE_STATIC : sqlite3_destructor_type? = nil
 
+// Ditto. SQLite copies the bound buffer, so the caller doesn't have to keep it
+// alive. Text/blob binds rely on this to avoid nesting a scope per bound value,
+// which made `bind_values` recurse once per parameter and overflow the stack on
+// large `IN (…)` lists.
+@usableFromInline let SQLITE_TRANSIENT : sqlite3_destructor_type? =
+  unsafeBitCast(-1, to: sqlite3_destructor_type?.self)
+
 extension String : SQLiteValueType {
   
   @inlinable
@@ -390,9 +399,9 @@ extension String : SQLiteValueType {
                    index: Int32, then execute: () -> Void)
   {
     withCString { cstr in
-      sqlite3_bind_text(stmt, index, cstr, -1, SQLITE_STATIC)
-      execute()
+      _ = sqlite3_bind_text(stmt, index, cstr, -1, SQLITE_TRANSIENT)
     }
+    execute()
   }
 }
 extension Substring : SQLiteValueType {
@@ -420,9 +429,9 @@ extension Substring : SQLiteValueType {
                    index: Int32, then execute: () -> Void)
   {
     withCString { cstr in
-      sqlite3_bind_text(stmt, index, cstr, -1, SQLITE_STATIC)
-      execute()
+      _ = sqlite3_bind_text(stmt, index, cstr, -1, SQLITE_TRANSIENT)
     }
+    execute()
   }
 }
 
@@ -510,9 +519,10 @@ extension Array: SQLiteValueType where Element == UInt8 {
                    index: Int32, then execute: () -> Void)
   {
     withUnsafeBytes { ubp in // UnsafeRawBufferPointer
-      sqlite3_bind_blob(stmt, index, ubp.baseAddress, Int32(ubp.count), nil)
-      execute()
+      _ = sqlite3_bind_blob(stmt, index, ubp.baseAddress, Int32(ubp.count),
+                            SQLITE_TRANSIENT)
     }
+    execute()
   }
 }
 
@@ -655,9 +665,10 @@ extension Data: SQLiteValueType {
                    index: Int32, then execute: () -> Void)
   {
     withUnsafeBytes { ubp /* UnsafeRawBufferPointer */ in
-      sqlite3_bind_blob(stmt, index, ubp.baseAddress, Int32(ubp.count), nil)
-      execute()
+      _ = sqlite3_bind_blob(stmt, index, ubp.baseAddress, Int32(ubp.count),
+                            SQLITE_TRANSIENT)
     }
+    execute()
   }
 }
 
@@ -693,9 +704,9 @@ extension URL {
                    index: Int32, then execute: () -> Void)
   {
     absoluteString.withCString { cstr in
-      sqlite3_bind_text(stmt, index, cstr, -1, SQLITE_STATIC)
-      execute()
+      _ = sqlite3_bind_text(stmt, index, cstr, -1, SQLITE_TRANSIENT)
     }
+    execute()
   }
 }
 

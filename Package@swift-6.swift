@@ -74,6 +74,7 @@ var package = Package(
     
     // MARK: - Tests
     
+    .testTarget(name: "BindingTests",    dependencies: [ "Lighter"           ]),
     .testTarget(name: "CodeGenASTTests", dependencies: [ "LighterCodeGenAST" ]),
     .testTarget(name: "EntityGenTests",  dependencies: [ "LighterGeneration" ]),
     .testTarget(name: "LighterOperationGenTests",
